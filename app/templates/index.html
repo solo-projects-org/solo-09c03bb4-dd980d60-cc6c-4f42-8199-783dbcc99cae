@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>公交清分数仓 · 换乘标志口径调整影响分析</title>
+<title>公交清分数仓 · 血缘分析与复算裁剪</title>
 <style>
   :root {
     --bg: #f4f6fa;
@@ -301,14 +301,94 @@
     box-shadow: var(--shadow);
   }
   .loading-box .spinner { border-color: #cfd8ec; border-top-color: var(--primary); }
+  .tabs {
+    max-width: 1280px;
+    margin: 18px auto 0;
+    padding: 0 20px;
+    display: flex;
+    gap: 8px;
+  }
+  .tab-btn {
+    border: 1px solid var(--border);
+    border-bottom: none;
+    background: #eef1f7;
+    color: var(--muted);
+    border-radius: 9px 9px 0 0;
+    padding: 9px 20px;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .tab-btn:hover { color: var(--primary); }
+  .tab-btn.active {
+    background: var(--panel);
+    color: var(--primary);
+    font-weight: 650;
+    box-shadow: 0 -1px 2px rgba(16, 24, 40, .05);
+  }
+  .tab-page { margin-top: 0; }
+  .tab-page .layout { margin-top: 14px; }
+  .chip-keep {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--ok-soft);
+    color: var(--ok);
+    border-radius: 12px;
+    font-size: 11.5px;
+    margin: 2px 4px 2px 0;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  .chip-drop {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #f2f4f7;
+    color: #98a2b3;
+    border-radius: 12px;
+    font-size: 11.5px;
+    margin: 2px 4px 2px 0;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    text-decoration: line-through;
+  }
+  .sql-preview {
+    margin-top: 8px;
+    background: #0f172a;
+    color: #dbe4f5;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .tag-rowonly { background: var(--warn-soft); color: var(--warn); border: 1px solid #fedf89; }
+  .prune-section-title {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: #344054;
+    margin: 14px 0 6px;
+  }
+  .download-bar {
+    margin-top: 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .download-bar .btn-primary { width: auto; padding: 10px 22px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>公交清分数仓 · 换乘标志口径调整影响分析</h1>
-  <p>基于 SQLGlot 解析 DuckDB SQL，定位待改源表字段影响的模型输出列与依赖路径</p>
+  <h1>公交清分数仓 · 血缘分析与复算裁剪</h1>
+  <p>基于 SQLGlot 解析 DuckDB SQL：定位换乘标志等口径调整影响，或按结算模型与复算列裁剪出精简模型包</p>
 </header>
 
+<div class="tabs">
+  <button class="tab-btn active" id="tab-btn-analyze">口径影响分析</button>
+  <button class="tab-btn" id="tab-btn-prune">复算裁剪打包</button>
+</div>
+
+<div class="tab-page" id="tab-analyze">
 <div class="layout">
   <!-- 左侧：数据源与字段选择 -->
   <div>
@@ -352,6 +432,55 @@
       </div>
     </div>
   </div>
+</div>
+</div>
+
+<!-- ==================== 复算裁剪打包 ==================== -->
+<div class="tab-page" id="tab-prune" hidden>
+<div class="layout">
+  <!-- 左侧：载入与选择 -->
+  <div>
+    <div class="panel">
+      <h2><span class="step-badge">1</span>载入模型 JSON</h2>
+      <div class="btn-row">
+        <button class="btn" id="btn-prune-sample">载入裁剪样例</button>
+        <label class="btn" style="margin:0">
+          上传 JSON
+          <input type="file" id="prune-file-input" accept=".json,application/json" hidden>
+        </label>
+      </div>
+      <div class="file-name" id="prune-file-name"></div>
+      <p class="hint">与影响分析同一 JSON 格式。裁剪仅支持扁平查询（SELECT / FROM / INNER JOIN ON / WHERE），不支持 CTE、子查询、去重与聚合。</p>
+      <div id="prune-model-deps" class="upstream-trees"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2><span class="step-badge">2</span>选择结算模型与复算列</h2>
+      <select id="prune-model-select" disabled>
+        <option value="">— 先选择结算模型 —</option>
+      </select>
+      <div class="field-list" id="prune-column-list">
+        <div class="empty" style="padding:24px">请先载入数据</div>
+      </div>
+      <p class="hint">勾选要复算的输出列；连接与筛选条件及其引用列会自动保留，未用到的上游列将被裁掉。</p>
+      <button class="btn-primary" id="btn-prune" disabled style="margin-top:14px">
+        生成精简包
+      </button>
+    </div>
+  </div>
+
+  <!-- 右侧：精简包预览与下载 -->
+  <div class="panel">
+    <h2><span class="step-badge">3</span>精简包预览与下载</h2>
+    <div id="prune-alert-box"></div>
+    <div id="prune-result-body">
+      <div class="empty">
+        <div class="big">✂️</div>
+        <div>载入 JSON、选择结算模型与复算列后，在此预览精简包。<br>只保留复算用到的模型、源表与列；所选列的值、列序与重复行不变。</div>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 
 <div class="loading-mask" id="loading">
@@ -586,6 +715,232 @@ function renderResult(r) {
     </div>`).join("");
 
   $("result-body").innerHTML = stats + cards;
+}
+
+/* ==================== 标签页切换 ==================== */
+function switchTab(name) {
+  $("tab-btn-analyze").classList.toggle("active", name === "analyze");
+  $("tab-btn-prune").classList.toggle("active", name === "prune");
+  $("tab-analyze").hidden = name !== "analyze";
+  $("tab-prune").hidden = name !== "prune";
+}
+$("tab-btn-analyze").addEventListener("click", () => switchTab("analyze"));
+$("tab-btn-prune").addEventListener("click", () => switchTab("prune"));
+
+/* ==================== 复算裁剪打包 ==================== */
+let prunePayload = null;
+let pruneModels = [];        // [{name, upstream, outputs}]
+let pruneModel = "";
+let prunePackageData = null; // 校验通过、等待下载的精简包
+
+function showPruneAlert(kind, msg) {
+  const box = $("prune-alert-box");
+  if (!msg) { box.innerHTML = ""; return; }
+  const icon = kind === "error" ? "⛔" : kind === "warn" ? "⚠️" : "ℹ️";
+  box.innerHTML = `<div class="alert alert-${kind}"><span>${icon}</span><span>${escapeHtml(msg)}</span></div>`;
+}
+
+async function loadPrunePayload(data, label) {
+  prunePayload = data;
+  pruneModel = "";
+  prunePackageData = null;
+  $("prune-file-name").textContent = label;
+  showPruneAlert("", "");
+  setLoading(true, "校验 SQL 与字段引用…");
+  try {
+    const res = await postJSON("/api/validate", prunePayload);
+    if (!res.ok) {
+      showPruneAlert("error", res.error);
+      resetPruneWorkspace();
+      return;
+    }
+    pruneModels = res.models;
+    renderPruneModelSelect();
+    renderPruneDeps();
+    $("prune-column-list").innerHTML = '<div class="empty" style="padding:24px">请先选择结算模型</div>';
+    $("btn-prune").disabled = true;
+    $("prune-result-body").innerHTML = `<div class="empty"><div class="big">✅</div>
+      <div>SQL 校验通过，共 ${pruneModels.length} 个模型。<br>请在左侧选择结算模型与要复算的输出列。</div></div>`;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function resetPruneWorkspace() {
+  pruneModels = [];
+  $("prune-model-select").innerHTML = '<option value="">— 先选择结算模型 —</option>';
+  $("prune-model-select").disabled = true;
+  $("prune-column-list").innerHTML = '<div class="empty" style="padding:24px">请先载入数据</div>';
+  $("prune-model-deps").innerHTML = "";
+  $("btn-prune").disabled = true;
+}
+
+function renderPruneModelSelect() {
+  const sel = $("prune-model-select");
+  sel.innerHTML = '<option value="">— 选择结算模型 —</option>' +
+    pruneModels.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}（${m.outputs.length} 列）</option>`).join("");
+  sel.disabled = false;
+  sel.value = "";
+}
+
+function renderPruneDeps() {
+  if (!pruneModels.length) { $("prune-model-deps").innerHTML = ""; return; }
+  $("prune-model-deps").innerHTML = "<div style='margin-bottom:6px;color:#667085'>模型读取关系：</div>" +
+    pruneModels.map(m => {
+      const ups = m.upstream.length
+        ? m.upstream.map(u => `<span class="model-chip">${escapeHtml(u)}</span>`).join("")
+        : '<span class="model-chip">仅源表</span>';
+      return `<div style="margin:4px 0"><span class="model-chip" style="background:#e8efff;color:#1849a9">${escapeHtml(m.name)}</span><span class="arr">←</span>${ups}</div>`;
+    }).join("");
+}
+
+function renderPruneColumns() {
+  const box = $("prune-column-list");
+  const info = pruneModels.find(m => m.name === pruneModel);
+  if (!info) {
+    box.innerHTML = '<div class="empty" style="padding:24px">请先选择结算模型</div>';
+    return;
+  }
+  box.innerHTML = info.outputs.map(c =>
+    `<label class="field-item">
+       <input type="checkbox" value="${escapeHtml(c)}">
+       <span>${escapeHtml(c)}</span>
+     </label>`).join("");
+  box.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const anyChecked = [...box.querySelectorAll("input")].some(i => i.checked);
+      $("btn-prune").disabled = !anyChecked;
+    });
+  });
+}
+
+$("prune-model-select").addEventListener("change", () => {
+  pruneModel = $("prune-model-select").value;
+  renderPruneColumns();
+  $("btn-prune").disabled = true;
+});
+
+$("prune-file-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  setLoading(true, "读取文件…");
+  try {
+    const text = await file.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch (err) { showPruneAlert("error", "JSON 解析失败：" + err.message); setLoading(false); return; }
+    await loadPrunePayload(data, "已上传：" + file.name);
+  } finally {
+    setLoading(false);
+    e.target.value = "";
+  }
+});
+
+$("btn-prune-sample").addEventListener("click", async () => {
+  setLoading(true, "载入裁剪样例…");
+  try {
+    const resp = await fetch("/api/sample_prune");
+    const data = await resp.json();
+    await loadPrunePayload(data, "裁剪样例 sample_prune.json");
+  } finally {
+    setLoading(false);
+  }
+});
+
+$("btn-prune").addEventListener("click", async () => {
+  if (!pruneModel) return;
+  const cols = [...$("prune-column-list").querySelectorAll("input:checked")].map(i => i.value);
+  if (!cols.length) return;
+  setLoading(true, "裁剪与校验中…");
+  showPruneAlert("", "");
+  try {
+    const qs = `model=${encodeURIComponent(pruneModel)}&columns=${cols.map(encodeURIComponent).join(",")}`;
+    const res = await postJSON("/api/prune?" + qs, prunePayload);
+    if (!res.ok) {
+      prunePackageData = null;
+      showPruneAlert("error", res.error + "（未生成下载）");
+      $("prune-result-body").innerHTML = `<div class="empty"><div class="big">⛔</div>
+        <div>裁剪已停止，请根据上方提示调整写法后重试。</div></div>`;
+      return;
+    }
+    prunePackageData = res.result.package;
+    renderPruneResult(res.result.summary);
+  } finally {
+    setLoading(false);
+  }
+});
+
+function chipList(cols, cls) {
+  return cols.map(c => `<span class="${cls}">${escapeHtml(c)}</span>`).join("");
+}
+
+function renderPruneResult(s) {
+  const keptModelCount = s.models.length;
+  const droppedModelCount = s.dropped_models.length;
+  const keptTableCount = s.source_tables.length;
+  const droppedTableCount = s.dropped_source_tables.length;
+
+  const stats = `
+    <div class="stats">
+      <div class="stat"><div class="num">${keptModelCount}</div><div class="lbl">保留模型（弃 ${droppedModelCount}）</div></div>
+      <div class="stat"><div class="num">${keptTableCount}</div><div class="lbl">保留源表（弃 ${droppedTableCount}）</div></div>
+      <div class="stat"><div class="num">${s.selected_columns.length}</div><div class="lbl">复算输出列</div></div>
+    </div>
+    <div class="alert alert-info">
+      <span>🎯</span>
+      <span>结算模型 <b>${escapeHtml(s.selected_model)}</b>，复算列 <b>${s.selected_columns.map(escapeHtml).join("、")}</b>。
+      精简包已通过现有规则校验：连接与筛选原样保留，所选列的值、列序与重复行不变。</span>
+    </div>`;
+
+  const modelCards = s.models.map(m => `
+    <div class="model-card">
+      <div class="model-head">
+        <span class="name">${escapeHtml(m.name)}</span>
+        ${m.row_only
+          ? '<span class="tag tag-rowonly">只读行 · 保留常量列</span>'
+          : `<span class="tag tag-value">保留 ${m.kept_columns.length} 列</span>`}
+      </div>
+      <div style="padding:10px 16px">
+        <div>${chipList(m.kept_columns, "chip-keep")}${chipList(m.dropped_columns, "chip-drop")}</div>
+        <details class="deps"><summary>查看裁剪后 SQL</summary>
+          <div class="sql-preview">${escapeHtml(m.sql)}</div>
+        </details>
+      </div>
+    </div>`).join("");
+
+  const tableLines = s.source_tables.map(t => `
+    <div style="margin:6px 0">
+      <span class="model-chip" style="background:#ecfdf3;color:#05603a">${escapeHtml(t.table)}</span>
+      ${t.columns.length
+        ? chipList(t.columns, "chip-keep")
+        : '<span class="meta-line">字段清单为空（只读行，不取列）</span>'}
+    </div>`).join("");
+
+  const droppedLine = (s.dropped_models.length || s.dropped_source_tables.length) ? `
+    <div class="meta-line" style="margin-top:10px">
+      ${s.dropped_models.length ? "已丢弃模型：" + s.dropped_models.map(escapeHtml).join("、") + "；" : ""}
+      ${s.dropped_source_tables.length ? "已丢弃源表：" + s.dropped_source_tables.map(escapeHtml).join("、") : ""}
+    </div>` : "";
+
+  $("prune-result-body").innerHTML = stats +
+    `<div class="prune-section-title">保留的模型（上游在前）</div>` + modelCards +
+    `<div class="prune-section-title">保留的源表字段</div>` + tableLines + droppedLine +
+    `<div class="download-bar">
+       <button class="btn-primary" id="btn-download">下载精简包 JSON</button>
+       <span class="meta-line">pruned_${escapeHtml(s.selected_model)}.json</span>
+     </div>`;
+  $("btn-download").addEventListener("click", downloadPrunePackage);
+}
+
+function downloadPrunePackage() {
+  if (!prunePackageData) return;
+  const blob = new Blob([JSON.stringify(prunePackageData, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `pruned_${pruneModel}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
 }
 </script>
 </body>

@@ -1,4 +1,4 @@
-"""公交清分数仓 · 换乘标志口径调整影响分析 Web 应用。"""
+"""公交清分数仓 · 换乘标志口径调整影响分析 + 复算裁剪 Web 应用。"""
 from __future__ import annotations
 
 import json
@@ -7,9 +7,11 @@ import os
 from flask import Flask, jsonify, render_template, request
 
 from lineage import AnalysisError, analyze, build_models
+from prune import prune_package
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SAMPLE_PATH = os.path.join(BASE_DIR, "data", "sample_clearing.json")
+PRUNE_SAMPLE_PATH = os.path.join(BASE_DIR, "data", "sample_prune.json")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB
@@ -51,6 +53,14 @@ def sample():
     return jsonify(payload)
 
 
+@app.get("/api/sample_prune")
+def sample_prune():
+    """复算裁剪样例：两个分支从同一上游取不同列，汇合为结算模型。"""
+    with open(PRUNE_SAMPLE_PATH, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    return jsonify(payload)
+
+
 @app.post("/api/validate")
 def validate():
     """校验上传的 JSON 并返回字段清单，供前端选择待改字段。"""
@@ -62,7 +72,11 @@ def validate():
             {"table": t, "columns": cols} for t, cols in source_schemas.items()
         ],
         "models": [
-            {"name": name, "upstream": sorted(info.upstream)}
+            {
+                "name": name,
+                "upstream": sorted(info.upstream),
+                "outputs": list(info.nodes[-1].output_columns),
+            }
             for name, info in infos.items()
         ],
     })
@@ -76,6 +90,20 @@ def run_analyze():
     if not target_table or not target_column:
         raise AnalysisError("请先选择待调整的源表字段。")
     result = analyze(payload, target_table, target_column)
+    return jsonify({"ok": True, "result": result})
+
+
+@app.post("/api/prune")
+def run_prune():
+    """复算裁剪：按选定结算模型与输出列生成精简包。
+
+    查询参数：model=<结算模型名>&columns=<逗号分隔的输出列>。
+    写法不受支持或精简包校验失败时返回 400 与中文原因，前端不提供下载。
+    """
+    payload = _parse_payload(request.get_data())
+    model = request.args.get("model", "").strip()
+    columns = [c.strip() for c in request.args.get("columns", "").split(",") if c.strip()]
+    result = prune_package(payload, model, columns)
     return jsonify({"ok": True, "result": result})
 
 

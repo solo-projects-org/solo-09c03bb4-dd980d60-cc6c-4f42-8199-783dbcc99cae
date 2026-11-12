@@ -1,0 +1,63 @@
+{
+  "scenario": "公交清分复算裁剪样例：两个分支从同一明细上游取不同列，汇合为换乘结算模型",
+  "source_tables": [
+    {
+      "table": "ods_card_transaction",
+      "columns": [
+        "transaction_id",
+        "card_id",
+        "line_id",
+        "transaction_time",
+        "amount",
+        "transfer_flag",
+        "city_code",
+        "settle_date"
+      ]
+    },
+    {
+      "table": "ods_card_info",
+      "columns": [
+        "card_id",
+        "card_type",
+        "issue_city",
+        "status"
+      ]
+    },
+    {
+      "table": "dim_bus_line",
+      "columns": [
+        "line_id",
+        "line_name",
+        "company_id",
+        "line_type"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "name": "dwd_card_transaction_detail",
+      "description": "刷卡交易明细宽表：关联卡信息与线路维度，按城市与卡状态筛选",
+      "sql": "SELECT t.transaction_id AS transaction_id, t.card_id AS card_id, t.line_id AS line_id, t.transaction_time AS transaction_time, t.amount AS amount, t.transfer_flag AS transfer_flag, t.settle_date AS settle_date, c.card_type AS card_type, c.issue_city AS issue_city, l.line_name AS line_name, l.company_id AS company_id FROM ods_card_transaction t INNER JOIN ods_card_info c ON t.card_id = c.card_id INNER JOIN dim_bus_line l ON t.line_id = l.line_id WHERE t.city_code = '3301' AND c.status = 'ACTIVE'"
+    },
+    {
+      "name": "dws_line_amount_daily",
+      "description": "线路金额分支：从明细上游取线路与金额列，筛选换乘交易",
+      "sql": "SELECT d.line_id AS line_id, d.line_name AS line_name, d.amount AS amount, d.settle_date AS settle_date FROM dwd_card_transaction_detail d WHERE d.transfer_flag = 1"
+    },
+    {
+      "name": "dws_card_transfer_daily",
+      "description": "卡换乘分支：从同一明细上游取卡与换乘标志列，筛选有效金额",
+      "sql": "SELECT d.card_id AS card_id, d.card_type AS card_type, d.transfer_flag AS transfer_flag, d.line_id AS line_id, d.settle_date AS settle_date FROM dwd_card_transaction_detail d WHERE d.amount > 0"
+    },
+    {
+      "name": "ads_transfer_settlement",
+      "description": "换乘结算模型：两分支按线路与结算日期汇合，输出结算金额与卡属性",
+      "sql": "SELECT a.line_id AS line_id, a.line_name AS line_name, a.amount AS settle_amount, b.card_type AS card_type, b.transfer_flag AS transfer_flag, a.settle_date AS settle_date FROM dws_line_amount_daily a INNER JOIN dws_card_transfer_daily b ON a.line_id = b.line_id AND a.settle_date = b.settle_date WHERE b.transfer_flag = 1"
+    },
+    {
+      "name": "ads_line_passenger_flow",
+      "description": "线路客流日报：与换乘结算复算无关，裁剪时将被丢弃",
+      "sql": "SELECT t.line_id AS line_id, t.settle_date AS settle_date, t.amount AS amount FROM ods_card_transaction t WHERE t.city_code = '3301'"
+    }
+  ]
+}
